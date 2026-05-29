@@ -1,26 +1,92 @@
+import { stringify } from "querystring";
 import { type FormEvent, useState } from "react";
+import { useNavigate } from "react-router";
 import FileUploader from "~/components/FileUploader";
 import Navbar from "~/components/Navbar";
+import { convertPdfToImage } from "~/lib/pdftoimage";
+import { usePuterStore } from "~/lib/puter";
+import { generateUUID } from "~/lib/utils";
 const upload = () => {
-  const [isProcessing, setIsProcessing] = useState();
-  const [statusText, setStatusText] = useState();
+  const { auth , isLoading , fs , ai ,kv}  = usePuterStore()
+
+  const navigate = useNavigate
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [statusText, setStatusText] = useState('');
   const [file,setFile] = useState<File| null>(null);
 
   const handleFileSelect = (file: File| null)=>{
     setFile(file)
   }
+const handleAnalyze = async (
+  {
+    companyName,
+    jobTitle,
+    jobDescription,
+    file,
+  }: {
+    companyName: string;
+    jobTitle: string;
+    jobDescription: string;
+    file: File;
+  }
+) => {
+    setIsProcessing(true);
+    setStatusText('Uploading the file ....');
+
+    const uploadedFile = await fs.upload([file])
+
+    if(!uploadedFile) return setStatusText('faield to Upload file ');
+    setStatusText('Converting to image...')
+    const imagefile = await convertPdfToImage(file);
+
+    if(!imagefile.file) return setStatusText('Failed to convert Pdf to Image');
+
+    setStatusText('Uploading the image ....');
+
+    const uploadedImage = await fs.upload([imagefile.file]);
+
+    if(!uploadedImage) return setStatusText('failed to upload Image ')
+
+    setStatusText('Preparing Data...')
+
+    const uuid = generateUUID();
+    const data = {
+      id: uuid,
+      resumePath: uploadedFile.path,
+      imagePath: uploadedImage.path,
+      companyName,
+      jobTitle,
+      jobDescription,
+      feedback : '',
+    }
+    await kv.set(`resume:${uuid}`, JSON.stringify(data));
+
+    setStatusText('Analyzing....')
+
+    const feedback = await ai.feedback(
+      uploadedFile.path,
+      `You are an expert in ATS(applicant Tracking system) and resume analysis....`
+    )
+
+
+};
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => { 
     e.preventDefault();
     const form = e.currentTarget.closest('form');
     if(!form) return;
     const fromdata = new FormData(form);
 
-    const companyName =fromdata.get('company-name');
-    const jobTitle =fromdata.get('job-title');
-    const jobDescritption =fromdata.get('job-description');
+    const companyName =fromdata.get('company-name') as string;
+    const jobTitle =fromdata.get('job-title') as string;
+    const jobDescription =fromdata.get('job-description') as string;
+
+    if(!file) return ;
+    
+    handleAnalyze({ companyName, jobTitle,jobDescription,file})
+
 
     console.log( {
-      companyName , jobTitle, jobDescritption , file
+      companyName , jobTitle, jobDescription , file
     })
   };
   return (
